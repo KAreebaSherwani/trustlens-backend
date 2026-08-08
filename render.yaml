@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: trustlens-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DEMO_MODE
+        value: "false"
+      - key: AUTO_EDD_LEVELS
+        value: "high"
+      - key: GEMINI_MODEL
+        value: "gemini-3.6-flash"
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false

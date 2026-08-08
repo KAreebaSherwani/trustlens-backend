@@ -1,0 +1,67 @@
+# TrustLens — Backend
+
+AI-driven customer risk profiling for digital wallet onboarding (Track 2 · Mobilink).
+FastAPI · Gemini reasoning · Supabase (Postgres) · deploys on Render.
+
+## Files
+```
+main.py        FastAPI app, service logic, all routes
+engine.py      risk engine (Gemini + deterministic fallback)
+store.py       storage layer (Supabase, in-memory fallback)
+models.py      pydantic models
+seed.py        demo applicants
+supabase_schema.sql   run once in Supabase SQL Editor
+render.yaml    Render blueprint
+requirements.txt / .env.example
+```
+
+## Run locally
+```bash
+pip install -r requirements.txt
+cp .env.example .env      # fill in keys
+uvicorn main:app --reload --port 8000
+# open http://localhost:8000  and  http://localhost:8000/docs
+```
+
+## Supabase (3 steps)
+1. Create a project at supabase.com.
+2. SQL Editor → paste `supabase_schema.sql` → Run.
+3. Settings → API → copy `Project URL` and a key into `SUPABASE_URL` / `SUPABASE_KEY`.
+   (Use the **service_role** key on the server so RLS never blocks writes.)
+
+If `SUPABASE_URL`/`SUPABASE_KEY` are set it uses Supabase; if not, it runs in-memory automatically.
+
+## Gemini
+Set `GEMINI_API_KEY` (and optionally `GEMINI_MODEL`). Leave `DEMO_MODE=false` for live reasoning.
+Set `DEMO_MODE=true` to force the reproducible deterministic engine (recommended for the final video).
+
+## Deploy on Render
+1. Push this folder to GitHub.
+2. Render → New → Blueprint → pick the repo (it reads `render.yaml`), **or** New → Web Service with:
+   - Build: `pip install -r requirements.txt`
+   - Start: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+3. Add env vars: `GEMINI_API_KEY`, `SUPABASE_URL`, `SUPABASE_KEY` (and `DEMO_MODE`, `AUTO_EDD_LEVELS`).
+4. Give Areeb the live URL as the frontend base URL.
+
+## API contract (build the frontend against this)
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/onboarding` | submit profile → risk assessment (+ EDD case if flagged) |
+| GET | `/api/applications` | officer list / garden grid |
+| GET | `/api/applications/{id}` | full detail + reasoning trail + case |
+| POST | `/api/applications/{id}/route-edd` | officer pulls a medium case into EDD |
+| POST | `/api/applications/{id}/clarify` | applicant sends clarification |
+| GET | `/api/edd/queue` | pending EDD cases |
+| POST | `/api/cases/{id}/action` | approve / request_clarification / escalate / reject |
+| GET | `/api/dashboard` | volume, risk distribution, EDD queue, before/after |
+| POST | `/api/reset` | reseed demo data |
+
+`plant_state` values for the garden: `healthy` 🌳 · `needs_attention` 🌾 · `under_review` 🪴 · `review_requested` 🌿 · `bloomed` 🌸 · `declined`.
+
+## Demo personas (reproducible in DEMO_MODE)
+| Profile | Result |
+|---|---|
+| Salaried, income ≈ transactions | LOW → healthy |
+| Self-employed shop, tx ≫ income, customer payments | MEDIUM → needs_attention |
+| Student/unemployed, tx ≫ income, personal | HIGH → auto-EDD → under_review |
