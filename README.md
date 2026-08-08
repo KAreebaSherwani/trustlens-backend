@@ -75,3 +75,60 @@ On a name/CNIC **mismatch** it adds a "Document verification" signal (inconsiste
 | Salaried, income ≈ transactions | LOW → healthy |
 | Self-employed shop, tx ≫ income, customer payments | MEDIUM → needs_attention |
 | Student/unemployed, tx ≫ income, personal | HIGH → auto-EDD → under_review |
+
+
+## System Architecture
+
+```mermaid
+flowchart TD
+    APP(["👤 Applicant (Kamran)"]):::actor
+    OFF(["🧑‍💼 Compliance Officer"]):::actor
+
+    subgraph FE["📱 Frontend — Mobile App · Garden UI"]
+        ONB["Onboarding flow<br/>KYC fields + CNIC photo"]
+        DASH["Officer Dashboard<br/>Trust Ecosystem + EDD queue"]
+    end
+
+    subgraph BE["⚙️ Backend — FastAPI on Render"]
+        API["API layer<br/>/api/onboarding<br/>/api/documents/analyze"]
+        DOC["Document OCR<br/>Gemini 3.6 Flash vision<br/>cross-check vs declared"]
+        ENG{{"Risk Engine<br/>multi-signal reasoning"}}
+        GEM["Gemini 3.6 Flash<br/>relational reasoning"]
+        DET["Deterministic fallback<br/>reproducible"]
+        DEC{"Risk level?"}
+        CASE["Create EDD case<br/>status: pending_review"]
+        ACT["Officer actions<br/>approve · clarify · escalate · reject"]
+        AGG["Dashboard aggregation<br/>volume · distribution · before/after"]
+    end
+
+    DB[("🗄️ Supabase · Postgres<br/>applications · cases")]:::db
+
+    %% ---- onboarding input ----
+    APP --> ONB --> API
+    API --> DOC
+    DOC -->|"name / CNIC mismatch"| ENG
+    API --> ENG
+
+    %% ---- AI risk-profiling ----
+    ENG --> GEM & DET
+    GEM --> DEC
+    DET --> DEC
+
+    %% ---- decision / flagging ----
+    DEC -->|"Low 🌳"| LOW["Active · healthy"]
+    DEC -->|"Medium 🌾"| MED["Needs attention"]
+    DEC -->|"High / mismatch 🪴"| CASE
+
+    %% ---- data storage ----
+    ENG --> DB
+    LOW --> DB
+    MED --> DB
+    CASE --> DB
+
+    %% ---- EDD routing + dashboard output ----
+    DB --> AGG --> DASH
+    CASE -.->|"EDD queue"| DASH
+    DASH --> OFF --> ACT --> DB
+
+    classDef actor fill:#1b4332,stroke:#081c15,color:#ffffff
+    classDef db fill:#40916c,stroke:#1b4332,color:#ffffff
