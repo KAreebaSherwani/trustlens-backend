@@ -48,6 +48,7 @@ Set `DEMO_MODE=true` to force the reproducible deterministic engine (recommended
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/api/onboarding` | submit profile → risk assessment (+ EDD case if flagged) |
+| POST | `/api/documents/analyze` | upload CNIC/doc image → OCR extract + cross-check vs declared data |
 | GET | `/api/applications` | officer list / garden grid |
 | GET | `/api/applications/{id}` | full detail + reasoning trail + case |
 | POST | `/api/applications/{id}/route-edd` | officer pulls a medium case into EDD |
@@ -58,6 +59,15 @@ Set `DEMO_MODE=true` to force the reproducible deterministic engine (recommended
 | POST | `/api/reset` | reseed demo data |
 
 `plant_state` values for the garden: `healthy` 🌳 · `needs_attention` 🌾 · `under_review` 🪴 · `review_requested` 🌿 · `bloomed` 🌸 · `declined`.
+
+### Document analysis (OCR via Gemini vision)
+`POST /api/documents/analyze` — `multipart/form-data`:
+- `file` (required): the CNIC / income / business document image
+- `document_type` (optional): `cnic` (default) / `income_proof` / `business_doc`
+- `application_id` (optional): if given, cross-checks the extracted ID against declared data
+
+Returns `{ extracted:{name,cnic,father_name,date_of_birth,address,date_of_expiry,raw_text}, checks:[{field,declared,extracted,verdict}], match_summary }`.
+On a name/CNIC **mismatch** it adds a "Document verification" signal (inconsistent) to the risk trail and auto-routes the application to EDD. In `DEMO_MODE` it returns a fixed sample extraction so the flow is reproducible without a live call.
 
 ## Demo personas (reproducible in DEMO_MODE)
 | Profile | Result |

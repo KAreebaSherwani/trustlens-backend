@@ -154,3 +154,45 @@ def assess(p: OnboardingIn) -> RiskResult:
         r = deterministic_assess(p)
         r.engine = f"deterministic (gemini fallback: {type(e).__name__})"
         return r
+
+
+# ------------------------------------------------------------------ document / OCR (multimodal)
+DOC_PROMPT = """You are a KYC document reader for Pakistani CNIC cards and financial/business
+documents. Read the attached image and extract the fields. Return ONLY valid JSON, no markdown:
+{{"document_type":"{document_type}","name":null,"cnic":null,"father_name":null,
+"date_of_birth":null,"address":null,"date_of_expiry":null,"raw_text":null}}
+Use null for any field not present. cnic format: 00000-0000000-0. dates as YYYY-MM-DD if possible.
+Put any other legible text into raw_text."""
+
+
+def _demo_document(document_type: str) -> dict:
+    return {"document_type": document_type, "name": "Kamran Ahmed", "cnic": "37405-3333333-3",
+            "father_name": "Ahmed Ali", "date_of_birth": "1992-05-14",
+            "address": "Liaquat Bazaar, Rawalpindi", "date_of_expiry": "2031-05-14",
+            "raw_text": "PAKISTAN NATIONAL IDENTITY CARD", "engine": "demo"}
+
+
+def extract_document(image_bytes: bytes, mime_type: str = "image/jpeg",
+                     document_type: str = "cnic") -> dict:
+    if DEMO_MODE or not GEMINI_API_KEY:
+        return _demo_document(document_type)
+    try:
+        from google import genai
+        from google.genai import types
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        resp = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=[types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+                      DOC_PROMPT.format(document_type=document_type)],
+        )
+        raw = (resp.text or "").strip()
+        if raw.startswith("```"):
+            raw = raw.strip("`")
+            raw = raw[raw.find("{"): raw.rfind("}") + 1]
+        data = json.loads(raw)
+        data["engine"] = "gemini"
+        return data
+    except Exception as e:
+        d = _demo_document(document_type)
+        d["engine"] = f"demo (gemini fallback: {type(e).__name__})"
+        return d

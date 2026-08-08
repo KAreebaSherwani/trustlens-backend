@@ -3,11 +3,12 @@ import os
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException
+from typing import Optional
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 
 from models import OnboardingIn, OfficerAction, Clarification
-from engine import assess, DEMO_MODE, GEMINI_API_KEY
+from engine import assess, extract_document, DEMO_MODE, GEMINI_API_KEY
 from store import get_store
 from seed import seed
 
@@ -191,6 +192,63 @@ def reset():
     STORE.clear()
     seed(create_application)
     return {"status": "reseeded", "applications": len(STORE.list_applications())}
+
+
+def _cross_check(profile: dict, ex: dict):
+    """Compare extracted ID fields against declared onboarding data."""
+    checks, mismatch = [], False
+    pairs = [("Name", profile.get("name"), ex.get("name")),
+             ("CNIC", profile.get("cnic"), ex.get("cnic")),
+             ("Date of birth", profile.get("dob"), ex.get("date_of_birth"))]
+    for label, declared, got in pairs:
+        if not declared or not got:
+            checks.append({"field": label, "declared": declared, "extracted": got, "verdict": "unverified"})
+            continue
+        d = str(declared).strip().lower().replace("-", "").replace(" ", "")
+        g = str(got).strip().lower().replace("-", "").replace(" ", "")
+        ok = d == g
+        if not ok:
+            mismatch = True
+        checks.append({"field": label, "declared": declared, "extracted": got,
+                       "verdict": "match" if ok else "mismatch"})
+    return checks, mismatch
+
+
+@app.post("/api/documents/analyze")
+async def analyze_document(file: UploadFile = File(...),
+                           document_type: str = Form("cnic"),
+                           application_id: Optional[str] = Form(None)):
+    """Extract fields from an uploaded ID/document image (OCR via Gemini vision).
+    If application_id is given, cross-checks the ID against declared data and updates the risk trail."""
+    image_bytes = await file.read()
+    mime = file.content_type or "image/jpeg"
+    extracted = extract_document(image_bytes, mime, document_type)
+    result = {"document_type": document_type, "extracted": extracted, "engine": extracted.get("engine")}
+
+    if application_id:
+        r = STORE.get_application(application_id)
+        if not r:
+            raise HTTPException(404, "Application not found")
+        checks, mismatch = _cross_check(r["profile"], extracted)
+        result["checks"] = checks
+        result["match_summary"] = "mismatch" if mismatch else "match"
+
+        r["risk"]["signals"].append({
+            "label": "Document verification",
+            "value": extracted.get("name") or "ID document",
+            "verdict": "inconsistent" if mismatch else "consistent",
+            "note": ("Uploaded ID does not match the declared details — identity mismatch."
+                     if mismatch else "Uploaded ID matches the declared details."),
+        })
+        r["history"].append({"status": r["status"], "at": now(), "by": "system",
+                             "note": f"Document analyzed: {'mismatch' if mismatch else 'match'}."})
+        STORE.update_application(r)
+        if mismatch and not r.get("case_id"):
+            open_case(r, reason="Identity mismatch between uploaded ID and declared details.", by="system")
+        result["application_status"] = r["status"]
+        result["plant_state"] = plant_state(r["status"], r["risk"]["level"])
+
+    return result
 
 
 @app.on_event("startup")
