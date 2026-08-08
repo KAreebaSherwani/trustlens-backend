@@ -9,7 +9,7 @@ import json
 from models import OnboardingIn, Signal, RiskResult, Level
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
 DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() in ("1", "true", "yes")
 
 
@@ -131,18 +131,51 @@ Return ONLY valid JSON, no markdown, exactly:
 
 
 def gemini_assess(p: OnboardingIn) -> RiskResult:
-    from google import genai
-    client = genai.Client(api_key=GEMINI_API_KEY)
     prompt = GEMINI_PROMPT.format(profile=json.dumps(p.model_dump(), ensure_ascii=False))
-    resp = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
-    raw = (resp.text or "").strip()
-    if raw.startswith("```"):
-        raw = raw.strip("`")
-        raw = raw[raw.find("{"): raw.rfind("}") + 1]
-    data = json.loads(raw)
-    return RiskResult(level=data["level"], confidence=int(data.get("confidence", 75)),
-                      signals=[Signal(**s) for s in data["signals"]],
-                      conclusion=data["conclusion"], engine="gemini")
+    models_to_try = [GEMINI_MODEL, "gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-1.5-flash"]
+    models_to_try = list(dict.fromkeys([m for m in models_to_try if m]))
+    
+    last_err = None
+    try:
+        from google import genai
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        for m in models_to_try:
+            try:
+                resp = client.models.generate_content(model=m, contents=prompt)
+                raw = (resp.text or "").strip()
+                if raw.startswith("```"):
+                    raw = raw.strip("`")
+                    raw = raw[raw.find("{"): raw.rfind("}") + 1]
+                data = json.loads(raw)
+                return RiskResult(level=data["level"], confidence=int(data.get("confidence", 75)),
+                                  signals=[Signal(**s) for s in data["signals"]],
+                                  conclusion=data["conclusion"], engine=f"gemini ({m})")
+            except Exception as e:
+                last_err = e
+    except Exception as e:
+        last_err = e
+
+    try:
+        import google.generativeai as genai_legacy
+        genai_legacy.configure(api_key=GEMINI_API_KEY)
+        for m in ["gemini-1.5-flash", "gemini-pro"]:
+            try:
+                model = genai_legacy.GenerativeModel(m)
+                resp = model.generate_content(prompt)
+                raw = (resp.text or "").strip()
+                if raw.startswith("```"):
+                    raw = raw.strip("`")
+                    raw = raw[raw.find("{"): raw.rfind("}") + 1]
+                data = json.loads(raw)
+                return RiskResult(level=data["level"], confidence=int(data.get("confidence", 75)),
+                                  signals=[Signal(**s) for s in data["signals"]],
+                                  conclusion=data["conclusion"], engine=f"gemini ({m})")
+            except Exception as e:
+                last_err = e
+    except Exception as e:
+        last_err = e
+
+    raise last_err or Exception("Gemini assessment failed across all models")
 
 
 def assess(p: OnboardingIn) -> RiskResult:
@@ -152,7 +185,7 @@ def assess(p: OnboardingIn) -> RiskResult:
         return gemini_assess(p)
     except Exception as e:
         r = deterministic_assess(p)
-        r.engine = f"deterministic (gemini fallback: {type(e).__name__})"
+        r.engine = f"deterministic (gemini fallback: {type(e).__name__}: {e})"
         return r
 
 
@@ -176,23 +209,34 @@ def extract_document(image_bytes: bytes, mime_type: str = "image/jpeg",
                      document_type: str = "cnic") -> dict:
     if DEMO_MODE or not GEMINI_API_KEY:
         return _demo_document(document_type)
+
+    models_to_try = [GEMINI_MODEL, "gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-1.5-flash"]
+    models_to_try = list(dict.fromkeys([m for m in models_to_try if m]))
+    
+    last_err = None
     try:
         from google import genai
         from google.genai import types
         client = genai.Client(api_key=GEMINI_API_KEY)
-        resp = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=[types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
-                      DOC_PROMPT.format(document_type=document_type)],
-        )
-        raw = (resp.text or "").strip()
-        if raw.startswith("```"):
-            raw = raw.strip("`")
-            raw = raw[raw.find("{"): raw.rfind("}") + 1]
-        data = json.loads(raw)
-        data["engine"] = "gemini"
-        return data
+        for m in models_to_try:
+            try:
+                resp = client.models.generate_content(
+                    model=m,
+                    contents=[types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+                              DOC_PROMPT.format(document_type=document_type)],
+                )
+                raw = (resp.text or "").strip()
+                if raw.startswith("```"):
+                    raw = raw.strip("`")
+                    raw = raw[raw.find("{"): raw.rfind("}") + 1]
+                data = json.loads(raw)
+                data["engine"] = f"gemini ({m})"
+                return data
+            except Exception as e:
+                last_err = e
     except Exception as e:
-        d = _demo_document(document_type)
-        d["engine"] = f"demo (gemini fallback: {type(e).__name__})"
-        return d
+        last_err = e
+
+    d = _demo_document(document_type)
+    d["engine"] = f"demo (gemini fallback: {type(last_err).__name__}: {last_err})"
+    return d
