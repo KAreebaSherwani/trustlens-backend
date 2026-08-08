@@ -96,7 +96,9 @@ flowchart TD
         GEM["Gemini 3.6 Flash<br/>relational reasoning"]
         DET["Deterministic fallback<br/>reproducible"]
         DEC{"Risk level?"}
-        CASE["Create EDD case<br/>status: pending_review"]
+        LOW["Active · healthy 🌳"]
+        MED["Needs attention 🌾"]
+        CASE["Create EDD case<br/>status: pending_review 🪴"]
         ACT["Officer actions<br/>approve · clarify · escalate · reject"]
         AGG["Dashboard aggregation<br/>volume · distribution · before/after"]
     end
@@ -104,20 +106,22 @@ flowchart TD
     DB[("🗄️ Supabase · Postgres<br/>applications · cases")]:::db
 
     %% ---- onboarding input ----
-    APP --> ONB --> API
+    APP --> ONB
+    ONB --> API
     API --> DOC
-    DOC -->|"name / CNIC mismatch"| ENG
+    DOC -->|CNIC mismatch| ENG
     API --> ENG
 
     %% ---- AI risk-profiling ----
-    ENG --> GEM & DET
+    ENG --> GEM
+    ENG --> DET
     GEM --> DEC
     DET --> DEC
 
     %% ---- decision / flagging ----
-    DEC -->|"Low 🌳"| LOW["Active · healthy"]
-    DEC -->|"Medium 🌾"| MED["Needs attention"]
-    DEC -->|"High / mismatch 🪴"| CASE
+    DEC -->|Low| LOW
+    DEC -->|Medium| MED
+    DEC -->|High| CASE
 
     %% ---- data storage ----
     ENG --> DB
@@ -126,9 +130,12 @@ flowchart TD
     CASE --> DB
 
     %% ---- EDD routing + dashboard output ----
-    DB --> AGG --> DASH
-    CASE -.->|"EDD queue"| DASH
-    DASH --> OFF --> ACT --> DB
+    DB --> AGG
+    AGG --> DASH
+    CASE --> DASH
+    DASH --> OFF
+    OFF --> ACT
+    ACT --> DB
 
     classDef actor fill:#1b4332,stroke:#081c15,color:#ffffff
     classDef db fill:#40916c,stroke:#1b4332,color:#ffffff
